@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Bar Inventory Pro - Zero Stock Fix</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
+    <style>
+        body { font-family: 'Segoe UI', sans-serif; background: #eef2f3; padding: 15px; color: #333; }
+        .container { max-width: 900px; margin: auto; background: white; padding: 20px; border-radius: 15px; box-shadow: 0 10px 25px rgba(0,0,0,0.1); }
+        .header-box { text-align: center; margin-bottom: 20px; border-bottom: 2px solid #f4f4f4; padding-bottom: 10px; }
+        .timestamp { color: #7f8c8d; font-size: 13px; margin: 10px 0; }
+        
+        .controls { display: flex; gap: 8px; margin-bottom: 20px; flex-wrap: wrap; }
+        #searchInput { flex: 2; padding: 12px; border: 1px solid #ddd; border-radius: 8px; font-size: 16px; }
+        
+        .btn { padding: 12px 15px; border: none; border-radius: 8px; cursor: pointer; font-weight: bold; color: white; transition: 0.3s; }
+        .btn-pdf { background: #e74c3c; flex: 1; }
+        .btn-edit { background: #f39c12; flex: 1; }
+        .btn-save { background: #27ae60; width: 100%; margin-top: 15px; font-size: 18px; }
+        
+        #reportArea { padding: 10px; }
+        table { width: 100%; border-collapse: collapse; margin-top: 10px; }
+        th { background: #2c3e50; color: white; padding: 12px; text-align: left; font-size: 14px; }
+        td { padding: 12px; border-bottom: 1px solid #eee; font-size: 15px; }
+        
+        /* Updated Critical Logic: Red background if SOH is 0 or very low */
+        .critical { background-color: #ffdce0 !important; font-weight: bold; }
+        .out-of-stock { color: #d63031; text-transform: uppercase; font-size: 11px; }
+        
+        .soh-input { width: 60px; padding: 8px; border: 2px solid #3498db; border-radius: 5px; text-align: center; font-size: 16px; }
+        .badge { padding: 4px 8px; border-radius: 12px; font-size: 10px; font-weight: bold; }
+        .badge-red { background: #e74c3c; color: white; }
+        
+        @media print { .no-print { display: none; } }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <div id="reportArea">
+        <div class="header-box">
+            <h2>🍷 BEVERAGE INVENTORY REPORT</h2>
+            <div id="lastUpdated" class="timestamp">Last Count: Loading...</div>
+        </div>
+
+        <table id="inventoryTable">
+            <thead>
+                <tr>
+                    <th>Item Name</th>
+                    <th>Target</th>
+                    <th>Actual (SOH)</th>
+                    <th>Status / Order</th>
+                </tr>
+            </thead>
+            <tbody id="tableBody"></tbody>
+        </table>
+    </div>
+
+    <div class="no-print" style="margin-top:20px;">
+        <div class="controls">
+            <input type="text" id="searchInput" onkeyup="filterTable()" placeholder="Search drinks...">
+            <button class="btn btn-edit" id="editBtn" onclick="toggleEdit()">✏️ Edit SOH</button>
+            <button class="btn btn-pdf" onclick="downloadPDF()">📄 Export PDF</button>
+        </div>
+        <button id="saveBtn" class="btn btn-save" style="display:none;" onclick="saveInventory()">💾 Save Changes</button>
+    </div>
+</div>
+
+<script>
+    // Logic: If SOH is 0 or less than 20% of Target, it marks as CRITICAL
+    let inventory = JSON.parse(localStorage.getItem('barData')) || [
+        { item: "Ramon B Crianza", target: 15, soh: 4 },
+        { item: "Primitivo", target: 6, soh: 7 },
+        { item: "The Owl Malbec", target: 6, soh: 6 },
+        { item: "Steadfast Shiraz", target: 6, soh: 9 },
+        { item: "Ramon B Rueda", target: 15, soh: 4 },
+        { item: "Dashwood Sauvignon Blanc", target: 6, soh: 4 },
+        { item: "Perrier-Jouet Grand Brut", target: 24, soh: 9 },
+        { item: "Prosecco Santa Margherita", target: 24, soh: 10 },
+        { item: "Singha", target: 24, soh: 3 },
+        { item: "Hoegaarden", target: 24, soh: 4 },
+        { item: "Ginger Ale", target: 2, soh: 0 }
+    ];
+
+    let isEditing = false;
+
+    function renderTable() {
+        const tbody = document.getElementById('tableBody');
+        tbody.innerHTML = '';
+        inventory.forEach((data, index) => {
+            let need = Math.max(0, data.target - data.soh);
+            
+            // FIX: Ensure 0 is always CRITICAL
+            let isCritical = (data.soh === 0 || data.soh <= data.target * 0.2);
+            let rowClass = isCritical ? "critical" : "";
+            let statusBadge = isCritical ? '<span class="badge badge-red">CRITICAL</span>' : '';
+            let outLabel = data.soh === 0 ? '<br><span class="out-of-stock">OUT OF STOCK</span>' : '';
+
+            let sohDisplay = isEditing ? `<input type="number" class="soh-input" value="${data.soh}" id="input-${index}">` : `<strong>${data.soh}</strong> ${outLabel}`;
+            
+            tbody.innerHTML += `<tr class="${rowClass}">
+                <td>${data.item}</td>
+                <td>${data.target}</td>
+                <td>${sohDisplay}</td>
+                <td>${statusBadge} ${need > 0 ? '<strong>Order: ' + need + '</strong>' : 'OK'}</td>
+            </tr>`;
+        });
+        document.getElementById('lastUpdated').innerText = "Last Updated: " + (localStorage.getItem('lastBarUpdate') || "New Session");
+    }
+
+    function toggleEdit() {
+        isEditing = !isEditing;
+        document.getElementById('saveBtn').style.display = isEditing ? 'block' : 'none';
+        document.getElementById('editBtn').innerText = isEditing ? '❌ Cancel' : '✏️ Edit SOH';
+        renderTable();
+    }
+
+    function saveInventory() {
+        inventory.forEach((data, index) => {
+            const newVal = document.getElementById(`input-${index}`).value;
+            data.soh = parseInt(newVal) || 0;
+        });
+        localStorage.setItem('barData', JSON.stringify(inventory));
+        localStorage.setItem('lastBarUpdate', new Date().toLocaleString());
+        isEditing = false;
+        document.getElementById('saveBtn').style.display = 'none';
+        document.getElementById('editBtn').innerText = '✏️ Edit SOH';
+        renderTable();
+    }
+
+    function downloadPDF() {
+        const element = document.getElementById('reportArea');
+        const opt = {
+            margin: 0.5,
+            filename: 'Inventory_Alert_Report.pdf',
+            image: { type: 'jpeg', quality: 0.98 },
+            html2canvas: { scale: 2 },
+            jsPDF: { unit: 'in', format: 'letter', orientation: 'portrait' }
+        };
+        html2pdf().set(opt).from(element).save();
+    }
+
+    function filterTable() {
+        let input = document.getElementById("searchInput").value.toUpperCase();
+        let tr = document.getElementById("tableBody").getElementsByTagName("tr");
+        for (let i = 0; i < tr.length; i++) {
+            let name = tr[i].getElementsByTagName("td")[0].innerText.toUpperCase();
+            tr[i].style.display = name.includes(input) ? "" : "none";
+        }
+    }
+
+    window.onload = renderTable;
+</script>
+
+</body>
+</html>
